@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chatbot UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-screen bg-black text-white flex">
+
+  <!-- Sidebar -->
+  <div id="sidebar" class="w-1/5 bg-gray-900 p-4 flex flex-col">
+    <button id="newChatBtn" class="bg-gray-700 p-2 rounded w-full mb-4">+ New Chat</button>
+    <div id="chatList" class="space-y-2 text-sm text-gray-300 flex-1 overflow-y-auto"></div>
+  </div>
+
+  <!-- Chat Window -->
+  <div class="flex-1 flex flex-col">
+    <div id="chatWindow" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
+
+    <!-- Input Bar -->
+    <div class="p-4 flex gap-2 border-t border-gray-700">
+      <input
+        id="chatInput"
+        class="flex-1 bg-gray-800 p-2 rounded text-white"
+        placeholder="Send a message..."
+      />
+      <button id="sendBtn" class="bg-blue-500 px-4 rounded">➤</button>
+    </div>
+  </div>
+
+  <script>
+    const chatWindow = document.getElementById("chatWindow");
+    const chatInput = document.getElementById("chatInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const newChatBtn = document.getElementById("newChatBtn");
+    const chatList = document.getElementById("chatList");
+
+    let chats = JSON.parse(localStorage.getItem("chats") || "[]");
+    let activeChatId = null;
+
+    // --- Utility ---
+    function saveChats() {
+      localStorage.setItem("chats", JSON.stringify(chats));
+    }
+
+    function createNewChat() {
+      const newChat = {
+        id: Date.now(),
+        title: "Chat " + (chats.length + 1),
+        messages: []
+      };
+      chats.push(newChat);
+      activeChatId = newChat.id;
+      saveChats();
+      renderSidebar();
+      renderMessages();
+    }
+
+    function renderSidebar() {
+      chatList.innerHTML = "";
+      chats.forEach(chat => {
+        const btn = document.createElement("button");
+        btn.className =
+          "block w-full text-left p-2 rounded hover:bg-gray-700 " +
+          (chat.id === activeChatId ? "bg-gray-800" : "");
+        btn.textContent = chat.title;
+        btn.onclick = () => {
+          activeChatId = chat.id;
+          renderSidebar();
+          renderMessages();
+        };
+        chatList.appendChild(btn);
+      });
+    }
+
+    function renderMessages() {
+      chatWindow.innerHTML = "";
+      const chat = chats.find(c => c.id === activeChatId);
+      if (!chat) return;
+      chat.messages.forEach(msg => {
+        const div = document.createElement("div");
+        div.className =
+          "p-3 rounded-xl max-w-xl whitespace-pre-wrap " +
+          (msg.role === "user"
+            ? "bg-blue-600 self-end text-white ml-auto"
+            : "bg-gray-700 self-start");
+
+        if (msg.type === "code") {
+          const pre = document.createElement("pre");
+          pre.className =
+            "bg-black p-2 rounded text-green-400 overflow-x-auto";
+          pre.textContent = msg.text;
+          div.appendChild(pre);
+        } else {
+          div.textContent = msg.text;
+        }
+        chatWindow.appendChild(div);
+      });
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+
+      const chat = chats.find(c => c.id === activeChatId);
+      if (!chat) return;
+
+      const userMsg = { role: "user", type: "text", text };
+      chat.messages.push(userMsg);
+      renderMessages();
+      saveChats();
+      chatInput.value = "";
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+        const data = await res.json();
+        const botMsg = {
+          role: "bot",
+          type: data.type || "text",
+          text: data.response,
+        };
+        chat.messages.push(botMsg);
+        renderMessages();
+        saveChats();
+      } catch (err) {
+        const botMsg = { role: "bot", type: "text", text: "⚠️ Server error." };
+        chat.messages.push(botMsg);
+        renderMessages();
+        saveChats();
+      }
+    }
+
+    // --- Event listeners ---
+    sendBtn.onclick = sendMessage;
+    chatInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") sendMessage();
+    });
+    newChatBtn.onclick = createNewChat;
+
+    // --- Init ---
+    if (chats.length === 0) {
+      createNewChat();
+    } else {
+      activeChatId = chats[0].id;
+      renderSidebar();
+      renderMessages();
+    }
+  </script>
+</body>
+</html>
