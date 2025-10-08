@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict
 from app.adapters.ollama_adapter import OllamaAdapter
 from app.prompts import networking_prompt, code_generation_prompt
 from app.utils import run_code, analyze_code
@@ -16,9 +16,14 @@ def get_adapter():
 # -----------------------------
 # Request Schemas
 # -----------------------------
+class Message(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
 class AskRequest(BaseModel):
     query: str
-    model: Optional[str] = None
+    model: Optional[str] = "llama3"
+    messages: Optional[List[Message]] = None
 
 class CodeGenRequest(BaseModel):
     task: str
@@ -30,10 +35,6 @@ class AnalyzeRequest(BaseModel):
     code: str
     model: str = "llama3"  # default
 
-class ChatRequest(BaseModel):
-    message: str
-    model: Optional[str] = None
-
 class CodeRequest(BaseModel):
     language: str
     code: str
@@ -42,7 +43,6 @@ class CodeRequest(BaseModel):
 # -----------------------------
 # Endpoints
 # -----------------------------
-
 @app.post("/run_code")
 async def run_code_endpoint(req: CodeRequest):
     return run_code(req.language, req.code)
@@ -51,36 +51,46 @@ async def run_code_endpoint(req: CodeRequest):
 async def analyze_code_endpoint(req: AnalyzeRequest):
     return analyze_code(req.language, req.code, req.model)
 
-@app.post("/chat")
-def chat(req: ChatRequest):
-    adapter = get_adapter()
-    if req.message.lower().startswith("generate code"):
-        prompt = code_generation_prompt(req.message, "python")
-        resp = adapter.generate(prompt, model=req.model, max_tokens=1000)
-        return {"type": "code", "response": resp}
-    else:
-        prompt = networking_prompt(req.message)
-        resp = adapter.generate(prompt, model=req.model, max_tokens=700)
-        return {"type": "text", "response": resp}
-
 @app.post("/ask")
 def ask(req: AskRequest):
     adapter = get_adapter()
-    prompt = networking_prompt(req.query)
-    resp = adapter.generate(prompt, model=req.model, max_tokens=700)
-    return {"answer": resp}
+
+    # Handle both chat-style input and single query
+    if req.messages and len(req.messages) > 0:
+        # Combine the conversation context properly
+        conversation_context = "\n".join(
+            [f"{msg.role.capitalize()}: {msg.content}" for msg in req.messages]
+        )
+        prompt = f"{conversation_context}\nUser: {req.query}\nAssistant:"
+    else:
+        # Default to networking question mode
+        prompt = networking_prompt(req.query)
+
+    try:
+        resp = adapter.generate(prompt, model=req.model, max_tokens=700)
+    except Exception as e:
+        resp = f"[Error generating response] {str(e)}"
+
+    return {
+        "answer": resp,
+        "model_used": req.model or "default",
+        "mode": "chat" if req.messages else "ask"
+    }
 
 @app.post("/generate_code")
 def generate_code(req: CodeGenRequest):
     adapter = get_adapter()
     prompt = code_generation_prompt(req.task, req.language)
-    resp = adapter.generate(prompt, model=req.model, max_tokens=1200)
-    return {"code": resp}
+    raw_code = adapter.generate(prompt, model=req.model, max_tokens=1200)
+
+    formatted_code = [line for line in raw_code.splitlines() if line.strip() != ""]
+
+    return {
+        "language": req.language,
+        "model_used": req.model or "default",
+        "generated_code": formatted_code
+    }
 
 @app.get("/")
 def root():
-    return {"message": "Network Copilot API (Ollama) is running. Use /docs to see endpoints."}
-
-@app.get("/ping")
-def ping():
-    return {"message": "pong"}
+    return {"message": "🚀 Network Copilot API (Ollama) is running. Visit /docs for the endpoints."}
